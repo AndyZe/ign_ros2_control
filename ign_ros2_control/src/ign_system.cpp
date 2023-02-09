@@ -149,8 +149,8 @@ public:
   /// \brief mapping of mimicked joints to index of joint they mimic
   std::vector<MimicJoint> mimic_joints_;
 
-  /// \brief Gain which converts position error to a velocity command
-  double position_proportional_gain_;
+  /// \brief PID controllers for each joint, used in converting position commands to Gazebo joint velocities
+  std::vector<control_toolbox::Pid> joint_position_pids_;
 };
 
 namespace ign_ros2_control
@@ -175,10 +175,29 @@ bool IgnitionSystem::initSim(
 
   this->dataPtr->joints_.resize(this->dataPtr->n_dof_);
 
-  constexpr double default_gain = 0.1;
-  if (!this->nh_->get_parameter_or("position_proportional_gain", this->dataPtr->position_proportional_gain_, default_gain))
-  {
-    RCLCPP_WARN_STREAM(this->nh_->get_logger(), "The position_proportional_gain parameter was not defined, defaulting to: " << default_gain);
+  // Initialize PID controllers for converting position commands to Gazebo joint velocities
+  double proportional_gain = 1.0;
+  double integral_gain = 0.1;
+  double derivative_gain = 0.1;
+  this->dataPtr->joint_position_pids_.resize(this->dataPtr->n_dof_);
+  for (unsigned int j = 0; j < this->dataPtr->n_dof_; j++) {
+    const std::string joint_name = this->dataPtr->joints_[j].name;
+    if (!this->nh_->get_parameter_or(joint_name + "/position_proportional_gain", proportional_gain, proportional_gain))
+    {
+      RCLCPP_WARN_STREAM(this->nh_->get_logger(), "The position_proportional_gain parameter was not defined for joint " << joint_name << ", defaulting to: " << proportional_gain);
+    }
+
+    if (!this->nh_->get_parameter_or(joint_name + "/position_integral_gain", integral_gain, integral_gain))
+    {
+      RCLCPP_WARN_STREAM(this->nh_->get_logger(), "The position_integral_gain parameter was not defined for joint " << joint_name << ", defaulting to: " << integral_gain);
+    }
+
+    if (!this->nh_->get_parameter_or(joint_name + "/position_derivative_gain", derivative_gain, derivative_gain))
+    {
+      RCLCPP_WARN_STREAM(this->nh_->get_logger(), "The position_derivative_gain parameter was not defined for joint " << joint_name << ", defaulting to: " << derivative_gain);
+    }
+
+    this->dataPtr->joint_position_pids_.at(j) = control_toolbox::Pid(proportional_gain, integral_gain, derivative_gain);
   }
 
   if (this->dataPtr->n_dof_ == 0) {
@@ -600,12 +619,10 @@ hardware_interface::return_type IgnitionSystem::write(
 
     else if (this->dataPtr->joints_[i].joint_control_method & POSITION) {
       // Get error in position
-      double error;
-      error = (this->dataPtr->joints_[i].joint_position -
-        this->dataPtr->joints_[i].joint_position_cmd) * *this->dataPtr->update_rate;
+      double error = this->dataPtr->joints_[i].joint_position - this->dataPtr->joints_[i].joint_position_cmd;
 
       // Calculate target velcity
-      double target_vel = -this->dataPtr->position_proportional_gain_ * error;
+      double target_vel = this->dataPtr->joint_position_pids_.at(i).computeCommand(error, *this->dataPtr->update_rate);
 
       if (!this->dataPtr->ecm->Component<ignition::gazebo::components::JointVelocityCmd>(
           this->dataPtr->joints_[i].sim_joint))

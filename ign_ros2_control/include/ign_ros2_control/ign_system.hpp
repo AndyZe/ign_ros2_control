@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "control_toolbox/pid.hpp"
 #include "ign_ros2_control/ign_system_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
